@@ -65,7 +65,12 @@ ExternalProject_Add(storage_compat_guest
     -DCMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER}
     -DCMAKE_OSX_ARCHITECTURES=${CMAKE_OSX_ARCHITECTURES}
     -DCMAKE_OSX_DEPLOYMENT_TARGET=${CMAKE_OSX_DEPLOYMENT_TARGET}
+  # duckdb_static alone is NOT self-contained: it leaves
+  # duckdb::ExtensionHelper::RegisterLinkedExtensions undefined, which would then bind
+  # to the HOST DuckDB. The generated loader and the in-tree extensions supply it.
   BUILD_COMMAND ${CMAKE_COMMAND} --build ${GUEST_BUILD} --target duckdb_static
+                                 duckdb_generated_extension_loader
+                                 parquet_extension core_functions_extension
   BUILD_BYPRODUCTS ${GUEST_ARCHIVES}
   INSTALL_COMMAND ""
   USES_TERMINAL_BUILD TRUE)
@@ -73,55 +78,32 @@ ExternalProject_Add(storage_compat_guest
 set(GUEST_BLOB ${CMAKE_CURRENT_BINARY_DIR}/guest_blob.o)
 
 if(APPLE)
-  # The export list must be EXACTLY the C-API symbols. Deriving it by pattern fails:
-  # `_duckdb_*` also matches third-party fsst entry points, some of which are hidden,
-  # and ld refuses to export a hidden symbol. So: symbols external somewhere MINUS
-  # symbols hidden anywhere.
-  execute_process(COMMAND sw_vers -productVersion OUTPUT_VARIABLE SC_MACOS_VER
-                  OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
-  if(NOT SC_MACOS_VER)
-    set(SC_MACOS_VER 11.0)
-  endif()
   if(CMAKE_OSX_ARCHITECTURES)
     set(SC_ARCH ${CMAKE_OSX_ARCHITECTURES})
   else()
     set(SC_ARCH ${CMAKE_HOST_SYSTEM_PROCESSOR})
   endif()
-  add_custom_command(
-    OUTPUT ${GUEST_BLOB}
-    DEPENDS storage_compat_guest
-    COMMAND ${CMAKE_COMMAND} -E echo "storage_compat: localizing guest symbols (macOS)"
-    COMMAND sh -c "nm -m '${GUEST_BUILD}/src/libduckdb_static.a' | grep ' _duckdb_' > sc_syms.txt || true; \
-grep 'private external' sc_syms.txt | awk '{print $$NF}' | sort -u > sc_hidden.txt; \
-grep ' external ' sc_syms.txt | awk '{print $$NF}' | sort -u > sc_ext.txt; \
-comm -23 sc_ext.txt sc_hidden.txt > sc_capi.txt; \
-test -s sc_capi.txt || (echo 'FATAL: derived an empty C-API export list' && exit 1)"
-    COMMAND ld -r -arch ${SC_ARCH} -platform_version macos ${SC_MACOS_VER} ${SC_MACOS_VER}
-            -o ${GUEST_BLOB} -all_load ${GUEST_ARCHIVES} -exported_symbols_list sc_capi.txt
-    COMMAND sh -c "test \"$$(nm -g '${GUEST_BLOB}' | grep -c ' [TDSB] __ZN6duckdb' || true)\" = 0 \
-|| (echo 'FATAL: guest blob still exports duckdb:: C++ symbols' && exit 1)"
-    COMMAND sh -c "test \"$$(nm -u '${GUEST_BLOB}' | grep -c '6duckdb' || true)\" = 0 \
-|| (echo 'FATAL: guest blob has undefined duckdb:: symbols; they would bind to the HOST' && exit 1)"
-    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
-    VERBATIM)
 elseif(UNIX)
-  find_program(SC_OBJCOPY NAMES ${CMAKE_OBJCOPY} objcopy llvm-objcopy REQUIRED)
-  add_custom_command(
-    OUTPUT ${GUEST_BLOB}
-    DEPENDS storage_compat_guest
-    COMMAND ${CMAKE_COMMAND} -E echo "storage_compat: localizing guest symbols (ELF)"
-    COMMAND ${CMAKE_LINKER} -r --whole-archive ${GUEST_ARCHIVES} --no-whole-archive -o ${GUEST_BLOB}.tmp
-    # hidden visibility gives STV_HIDDEN; --localize-hidden turns those into local symbols
-    COMMAND ${SC_OBJCOPY} --localize-hidden ${GUEST_BLOB}.tmp ${GUEST_BLOB}
-    COMMAND sh -c "test \"$$(nm -g --defined-only '${GUEST_BLOB}' | grep -c '_ZN6duckdb' || true)\" = 0 \
-|| (echo 'FATAL: guest blob still exports duckdb:: C++ symbols' && exit 1)"
-    COMMAND sh -c "test \"$$(nm -u '${GUEST_BLOB}' | grep -c '_ZN6duckdb' || true)\" = 0 \
-|| (echo 'FATAL: guest blob has undefined duckdb:: symbols; they would bind to the HOST' && exit 1)"
-    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
-    VERBATIM)
+  set(SC_ARCH ${CMAKE_SYSTEM_PROCESSOR})
+  find_program(SC_OBJCOPY NAMES objcopy llvm-objcopy gobjcopy)
+  if(NOT SC_OBJCOPY)
+    message(FATAL_ERROR "storage_compat: objcopy not found; needed to localize the guest symbols")
+  endif()
 else()
   message(FATAL_ERROR "storage_compat: only macOS and Linux are supported; see README 'Platform support'.")
 endif()
+
+# The shell lives in a script, not inline here: quoting through
+# CMake -> Ninja/Make -> sh mangles it (an earlier inline version silently turned
+# awk '{print $NF}' into '$($NF)' and produced an empty export list).
+add_custom_command(
+  OUTPUT ${GUEST_BLOB}
+  DEPENDS storage_compat_guest ${CMAKE_CURRENT_SOURCE_DIR}/scripts/localize_guest.sh
+  COMMAND ${CMAKE_COMMAND} -E env OBJCOPY=${SC_OBJCOPY}
+          ${CMAKE_CURRENT_SOURCE_DIR}/scripts/localize_guest.sh
+          ${GUEST_BLOB} ${SC_ARCH} ${GUEST_ARCHIVES}
+  WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+  VERBATIM)
 
 add_custom_target(storage_compat_guest_blob DEPENDS ${GUEST_BLOB})
 
