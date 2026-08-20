@@ -1,0 +1,59 @@
+# name: test/sql/storage_compat.test
+# description: read a newer-storage DuckDB database through storage_compat
+# group: [storage_compat]
+
+require storage_compat
+
+# a database in a storage format this DuckDB cannot open natively
+statement error
+ATTACH '__WORKING_DIRECTORY__/test/data/newstorage.db' AS plain;
+----
+<REGEX>:.*version number.*
+
+statement ok
+ATTACH 'storage_compat:__WORKING_DIRECTORY__/test/data/newstorage.db' AS db (READ_ONLY);
+
+query I
+SELECT count(*) FROM db.events;
+----
+3
+
+query III
+SELECT id, name, who.x FROM db.events WHERE id IS NOT NULL ORDER BY id;
+----
+1	alpha	7
+2	beta	8
+
+query I
+SELECT id2 FROM db.doubled ORDER BY id2;
+----
+2
+4
+6
+
+# a column of a type this DuckDB cannot represent is visible, but never invented
+query II
+SELECT column_name, data_type FROM duckdb_columns()
+WHERE database_name='db' AND table_name='future' AND column_name='ts';
+----
+ts	UNSUPPORTED(TIMESTAMPTZ_NS)
+
+query II
+SELECT id, label FROM db.future;
+----
+1	still-readable
+
+statement error
+SELECT * FROM db.future;
+----
+<REGEX>:.*cannot represent.*
+
+query I
+SELECT column_name FROM db.storage_compat_tables() WHERE NOT readable;
+----
+ts
+
+statement error
+INSERT INTO db.events VALUES (9,'nope',0.0,[],{'x':0,'y':''});
+----
+<REGEX>:.*read-only.*
