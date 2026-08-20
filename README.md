@@ -2,6 +2,12 @@
 
 Read a DuckDB database written in a **newer storage format** than your DuckDB supports.
 
+Versions drift across a deployment: one service writes with a newer DuckDB while another
+still reads with an older one. The producer-side fix — `ATTACH ... (STORAGE_VERSION ...)`
+— only helps if you control every writer. This is the consumer-side fix, deployable
+unilaterally by the service doing the reading, so producers and consumers can version
+independently.
+
 ```console
 $ duckdb -c "ATTACH 'file200.db' AS db;"
 IO Error: Trying to read a database file with version number 999, but we can only
@@ -42,6 +48,9 @@ The two `.cpp` files never see each other's headers: both `duckdb.h` copies decl
 same C symbols, and both engines declare `namespace duckdb`.
 
 ## It never guesses
+
+When you do not control the producers, a writer can start using a type your engine has
+never heard of without warning — so degrading predictably is the point, not a detail.
 
 A column whose type the host cannot represent stays visible in the catalog, named for
 what it actually is:
