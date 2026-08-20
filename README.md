@@ -82,20 +82,24 @@ byte-identical. The embedded engine is opened read-only as well.
 
 ## Building
 
-The extension needs a second DuckDB checkout — the *guest*, whose storage format you
-want to read.
+The *guest* — the DuckDB whose storage format you want to read — is the
+`duckdb-guest` submodule. It is pinned to a commit of DuckDB `main`; bump that pointer
+as newer versions appear and nothing else needs to change.
 
 ```sh
 git clone --recurse-submodules https://github.com/TODO-your-org/duckdb-storage-compat
 cd duckdb-storage-compat
 
-# 1. build the guest with everything but its C API hidden
-./scripts/build_guest.sh /path/to/newer-duckdb build/guest
+./scripts/build_guest.sh     # builds the pinned guest with only its C API visible
+GEN=ninja make release       # builds the extension against it
+```
 
-# 2. build the extension against it
-GEN=ninja \
-EXTRA_CMAKE_VARIABLES="-DSTORAGE_COMPAT_GUEST_SRC=/path/to/newer-duckdb -DSTORAGE_COMPAT_GUEST_BUILD=$PWD/build/guest" \
-make release
+Guest currently pinned to `ce512b864cc3` (`v1.6.0-dev13001`, storage
+`v2.0.0+`). To target a different one:
+
+```sh
+git -C duckdb-guest fetch origin && git -C duckdb-guest checkout <ref>
+./scripts/build_guest.sh && GEN=ninja make release
 ```
 
 `./demo.sh <host-duckdb> <guest-duckdb> <storage_compat.duckdb_extension>` runs a full

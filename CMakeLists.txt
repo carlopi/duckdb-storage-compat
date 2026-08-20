@@ -29,15 +29,21 @@ include_directories(src)
 # Point STORAGE_COMPAT_GUEST_SRC/BUILD at a checkout+build produced by
 # scripts/build_guest.sh.
 # ---------------------------------------------------------------------------
-set(STORAGE_COMPAT_GUEST_SRC "" CACHE PATH "Source checkout of the guest DuckDB")
-set(STORAGE_COMPAT_GUEST_BUILD "" CACHE PATH "Build dir produced by scripts/build_guest.sh")
+# Defaults to the pinned `duckdb-guest` submodule; override to try another checkout.
+set(STORAGE_COMPAT_GUEST_SRC "${CMAKE_CURRENT_SOURCE_DIR}/duckdb-guest"
+    CACHE PATH "Source checkout of the guest DuckDB")
+set(STORAGE_COMPAT_GUEST_BUILD "${CMAKE_CURRENT_BINARY_DIR}/guest"
+    CACHE PATH "Build dir produced by scripts/build_guest.sh")
 
-if(NOT STORAGE_COMPAT_GUEST_SRC OR NOT STORAGE_COMPAT_GUEST_BUILD)
+if(NOT EXISTS "${STORAGE_COMPAT_GUEST_SRC}/src/include/duckdb.h")
   message(FATAL_ERROR
-    "storage_compat needs an embedded guest DuckDB.\n"
-    "  ./scripts/build_guest.sh <guest-duckdb-src> <guest-build-dir>\n"
-    "then re-run cmake with\n"
-    "  -DSTORAGE_COMPAT_GUEST_SRC=<guest-duckdb-src> -DSTORAGE_COMPAT_GUEST_BUILD=<guest-build-dir>")
+    "guest DuckDB sources not found at ${STORAGE_COMPAT_GUEST_SRC}\n"
+    "  git submodule update --init --recursive")
+endif()
+if(NOT EXISTS "${STORAGE_COMPAT_GUEST_BUILD}/src/libduckdb_static.a")
+  message(FATAL_ERROR
+    "guest DuckDB not built at ${STORAGE_COMPAT_GUEST_BUILD}\n"
+    "  ./scripts/build_guest.sh   # uses the pinned submodule by default")
 endif()
 
 set(GUEST_BLOB ${CMAKE_CURRENT_BINARY_DIR}/guest_blob.o)

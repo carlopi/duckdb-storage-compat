@@ -9,8 +9,10 @@
 # visible guest symbol can capture a host-facing call and silently run 2.x code over 1.5
 # objects (observed: "INTERNAL Error: Missing DB manager").
 set -euo pipefail
-SRC="${1:?path to the guest duckdb source checkout}"
-OUT="${2:?output build directory}"
+HERE="$(cd "$(dirname "$0")/.." && pwd)"
+SRC="${1:-$HERE/duckdb-guest}"          # the pinned guest submodule by default
+OUT="${2:-$HERE/build/guest}"
+[ -f "$SRC/src/include/duckdb.h" ] || { echo "no guest sources at $SRC - run: git submodule update --init --recursive"; exit 1; }
 JOBS="${3:-$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)}"
 
 cmake -S "$SRC" -B "$OUT" -G Ninja \

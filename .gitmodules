@@ -4,3 +4,9 @@
 [submodule "extension-ci-tools"]
 	path = extension-ci-tools
 	url = https://github.com/duckdb/extension-ci-tools
+# The GUEST: the DuckDB whose storage format we want to be able to read.
+# Pinned to a main commit today; bump this pointer as newer versions appear
+# (a 2.0.0 tag, then later releases) - nothing else in the repo needs to change.
+[submodule "duckdb-guest"]
+	path = duckdb-guest
+	url = https://github.com/duckdb/duckdb
