@@ -89,10 +89,13 @@ as newer versions appear and nothing else needs to change.
 ```sh
 git clone --recurse-submodules https://github.com/TODO-your-org/duckdb-storage-compat
 cd duckdb-storage-compat
-
-./scripts/build_guest.sh     # builds the pinned guest with only its C API visible
-GEN=ninja make release       # builds the extension against it
+GEN=ninja make release
 ```
+
+The guest is built automatically by the extension's CMake (`ExternalProject_Add`), with
+hidden visibility and PIC, so the standard extension build works unmodified — nothing
+extra to run, which is what CI needs. `scripts/build_guest.sh` remains as a way to build
+just the guest by hand when iterating on it.
 
 Guest currently pinned to `ce512b864cc3` (`v1.6.0-dev13001`, storage
 `v2.0.0+`). To target a different one:
