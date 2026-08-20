@@ -130,16 +130,12 @@ add_custom_target(storage_compat_guest_blob DEPENDS ${GUEST_BLOB})
 # The host half: sees only host headers, plus the POD boundary in src/sc_guest_api.hpp.
 set(EXTENSION_SOURCES src/storage_compat_extension.cpp)
 
-build_static_extension(${TARGET_NAME} ${EXTENSION_SOURCES})
+# Loadable only. See extension_config.cmake: a static link would put two DuckDBs into
+# libduckdb and every duckdb:: static data member would be defined twice.
 build_loadable_extension(${TARGET_NAME} " " ${EXTENSION_SOURCES})
 
-foreach(t ${EXTENSION_NAME} ${LOADABLE_EXTENSION_NAME})
+foreach(t ${LOADABLE_EXTENSION_NAME})
   add_dependencies(${t} storage_compat_guest_blob)
   target_link_libraries(${t} ${GUEST_BLOB})
 endforeach()
 
-install(
-  TARGETS ${EXTENSION_NAME}
-  EXPORT "${DUCKDB_EXPORT_SET}"
-  LIBRARY DESTINATION "${INSTALL_LIB_DIR}"
-  ARCHIVE DESTINATION "${INSTALL_LIB_DIR}")
