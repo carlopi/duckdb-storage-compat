@@ -9,7 +9,7 @@ set(CMAKE_CXX_STANDARD "17" CACHE STRING "C++ standard to enforce")
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 include(ExternalProject)
-include_directories(src)
+include_directories(src src/include)
 
 # ---------------------------------------------------------------------------
 # The GUEST: a second DuckDB - the one that understands the newer storage format.
@@ -93,28 +93,30 @@ else()
   message(FATAL_ERROR "storage_compat: only macOS and Linux are supported; see README 'Platform support'.")
 endif()
 
-# The shell lives in a script, not inline here: quoting through
-# CMake -> Ninja/Make -> sh mangles it (an earlier inline version silently turned
-# awk '{print $NF}' into '$($NF)' and produced an empty export list).
-add_custom_command(
-  OUTPUT ${GUEST_BLOB}
-  DEPENDS storage_compat_guest ${CMAKE_CURRENT_SOURCE_DIR}/scripts/localize_guest.sh
-  COMMAND ${CMAKE_COMMAND} -E env OBJCOPY=${SC_OBJCOPY}
-          ${CMAKE_CURRENT_SOURCE_DIR}/scripts/localize_guest.sh
-          ${GUEST_BLOB} ${SC_ARCH} ${GUEST_ARCHIVES}
-  WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
-  VERBATIM)
-
-add_custom_target(storage_compat_guest_blob DEPENDS ${GUEST_BLOB})
-
 # The ONLY translation unit compiled against the guest headers. It must never see a
 # host header: both duckdb.h copies declare the same C symbols.
 add_library(sc_guest_shim OBJECT src/sc_guest.cpp)
 add_dependencies(sc_guest_shim storage_compat_guest)
 target_include_directories(sc_guest_shim PRIVATE
   ${STORAGE_COMPAT_GUEST_SRC}/src/include ${CMAKE_CURRENT_SOURCE_DIR}/src)
-set_target_properties(sc_guest_shim PROPERTIES
-  POSITION_INDEPENDENT_CODE ON CXX_VISIBILITY_PRESET hidden)
+# NOT hidden: the sc:: boundary symbols must stay visible so the blob step can keep
+# them (everything else in the blob is localized).
+set_target_properties(sc_guest_shim PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
+# The shell lives in a script, not inline here: quoting through
+# CMake -> Ninja/Make -> sh mangles it (an earlier inline version silently turned
+# awk '{print $NF}' into '$($NF)' and produced an empty export list).
+add_custom_command(
+  OUTPUT ${GUEST_BLOB}
+  DEPENDS storage_compat_guest sc_guest_shim ${CMAKE_CURRENT_SOURCE_DIR}/scripts/localize_guest.sh
+  COMMAND ${CMAKE_COMMAND} -E env OBJCOPY=${SC_OBJCOPY}
+          MACOSX_DEPLOYMENT_TARGET=${CMAKE_OSX_DEPLOYMENT_TARGET}
+          ${CMAKE_CURRENT_SOURCE_DIR}/scripts/localize_guest.sh
+          ${GUEST_BLOB} ${SC_ARCH} $<TARGET_OBJECTS:sc_guest_shim> ${GUEST_ARCHIVES}
+  WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+  VERBATIM)
+
+add_custom_target(storage_compat_guest_blob DEPENDS ${GUEST_BLOB})
 
 # The host half: sees only host headers, plus the POD boundary in src/sc_guest_api.hpp.
 set(EXTENSION_SOURCES src/storage_compat_extension.cpp)
@@ -124,7 +126,6 @@ build_loadable_extension(${TARGET_NAME} " " ${EXTENSION_SOURCES})
 
 foreach(t ${EXTENSION_NAME} ${LOADABLE_EXTENSION_NAME})
   add_dependencies(${t} storage_compat_guest_blob)
-  target_sources(${t} PRIVATE $<TARGET_OBJECTS:sc_guest_shim>)
   target_link_libraries(${t} ${GUEST_BLOB})
 endforeach()
 

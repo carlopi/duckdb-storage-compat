@@ -2,6 +2,7 @@
 //   LOAD storage_compat;
 //   ATTACH 'storage_compat:file200.db' AS db;
 #include "duckdb.hpp"
+#include "storage_compat_extension.hpp"
 #include "duckdb/catalog/catalog.hpp"
 #include "duckdb/catalog/catalog_entry/schema_catalog_entry.hpp"
 #include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
@@ -593,13 +594,27 @@ static void LoadInternal(ExtensionLoader &loader) {
 	StorageExtension::Register(config, "storage_compat", make_shared_ptr<ScStorageExtension>());
 }
 
+void StorageCompatExtension::Load(ExtensionLoader &loader) {
+	LoadInternal(loader);
+}
+
+std::string StorageCompatExtension::Name() {
+	return "storage_compat";
+}
+
+std::string StorageCompatExtension::Version() const {
+#ifdef EXT_VERSION_STORAGE_COMPAT
+	return EXT_VERSION_STORAGE_COMPAT;
+#else
+	return "";
+#endif
+}
+
 } // namespace duckdb
 
 extern "C" {
-DUCKDB_EXTENSION_API void storage_compat_duckdb_cpp_init(duckdb::ExtensionLoader &loader) {
+
+DUCKDB_CPP_EXTENSION_ENTRY(storage_compat, loader) {
 	duckdb::LoadInternal(loader);
-}
-DUCKDB_EXTENSION_API const char *storage_compat_version() {
-	return duckdb::DuckDB::LibraryVersion();
 }
 }
