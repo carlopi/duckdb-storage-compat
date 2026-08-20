@@ -85,10 +85,19 @@ if(APPLE)
   endif()
 elseif(UNIX)
   set(SC_ARCH ${CMAKE_SYSTEM_PROCESSOR})
-  find_program(SC_OBJCOPY NAMES objcopy llvm-objcopy gobjcopy)
+  # CI toolchains often live outside PATH (e.g. gcc-toolset), so look next to the
+  # compiler as well as in the usual places. CMAKE_OBJCOPY is set by CMake when it
+  # knows the toolchain's binutils.
+  get_filename_component(SC_COMPILER_DIR "${CMAKE_CXX_COMPILER}" DIRECTORY)
+  find_program(SC_OBJCOPY
+    NAMES ${CMAKE_OBJCOPY} objcopy llvm-objcopy gobjcopy
+    HINTS "${SC_COMPILER_DIR}" "${SC_COMPILER_DIR}/../bin")
   if(NOT SC_OBJCOPY)
-    message(FATAL_ERROR "storage_compat: objcopy not found; needed to localize the guest symbols")
+    message(FATAL_ERROR
+      "storage_compat: objcopy not found (looked in PATH and beside ${CMAKE_CXX_COMPILER}).\n"
+      "It is needed to localize the embedded guest's symbols.")
   endif()
+  message(STATUS "storage_compat: using objcopy ${SC_OBJCOPY}")
 else()
   message(FATAL_ERROR "storage_compat: only macOS and Linux are supported; see README 'Platform support'.")
 endif()

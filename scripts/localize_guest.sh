@@ -39,6 +39,7 @@ Linux)
   n=$(wc -l < "$WORK/sc_keep.txt" | tr -d ' ')
   [ "$n" -gt 0 ] || { echo "FATAL: no sc:: boundary symbols found in $SHIM"; exit 1; }
   echo "storage_compat: guest blob will export $n sc:: symbols and nothing else"
+  echo "storage_compat: ld=$(command -v ld) objcopy=${OBJCOPY:-objcopy}"
   ld -r --whole-archive "${ARCHIVES[@]}" --no-whole-archive "$SHIM" -o "$OUT.tmp"
   "${OBJCOPY:-objcopy}" --keep-global-symbols="$WORK/sc_keep.txt" "$OUT.tmp" "$OUT"
   rm -f "$OUT.tmp"
