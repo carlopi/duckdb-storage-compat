@@ -124,6 +124,28 @@ across images at runtime regardless of the two-level namespace.
 
 The CMake asserts both properties and fails the build if either regresses.
 
+## Guest pin policy
+
+The guest submodule decides which storage formats this extension can read, and a stale
+pin is **safe**: if the guest is older than the format a file was written in, it refuses
+to open it and you get its own version error, plus the embedded version:
+
+```
+IO Error: storage_compat: could not open 'file210.db': ... version number ...
+(this build embeds DuckDB v1.6.0-dev13001 - if the file is newer than that, the
+extension needs rebuilding against a newer DuckDB)
+```
+
+A stale pin therefore degrades to a clear refusal, never to a misread. Two consequences:
+
+- **Before the upstream storage format is frozen**, re-pin often. A pre-freeze commit can
+  still change a storage version's layout in place, and then the pinned guest and the
+  released writer would disagree about what the same version number means — the one case
+  where a stale pin is genuinely unsafe rather than merely stale.
+- **After the freeze**, bumping to the release tag is tidy but not required for
+  correctness. Files in the frozen format read the same either way; a newer format
+  arrives with a new version number, which an old guest refuses cleanly.
+
 ## Platform support
 
 | platform | status |

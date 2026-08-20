@@ -418,7 +418,13 @@ public:
 		string err;
 		guest = sc::Open(path, "", err);
 		if (!guest) {
-			throw IOException("storage_compat: could not open '%s': %s", path, err);
+			// Most likely cause when this fires on a real database: the embedded engine is
+			// older than the format the file was written in. Name it, so pin drift is
+			// diagnosable from the error alone.
+			throw IOException("storage_compat: could not open '%s': %s\n"
+			                  "(this build embeds DuckDB %s - if the file is newer than that, "
+			                  "the extension needs rebuilding against a newer DuckDB)",
+			                  path, err, sc::GuestVersion());
 		}
 		storage_version = sc::StorageVersion(guest);
 		auto tables = sc::ListTables(guest, err);
