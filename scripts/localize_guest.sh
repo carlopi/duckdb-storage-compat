@@ -35,40 +35,47 @@ Darwin)
   undef=$(nm -u "$OUT" | grep -c '6duckdb' || true)
   ;;
 Linux)
-  # GNU nm marks mangled names without a leading underscore.
+  # On Linux DuckDB links the HOST duckdb statically into every loadable extension
+  # (EXTENSION_STATIC_BUILD), so this object ends up beside a second copy of
+  # libduckdb_static.a. Localizing is not sufficient there: symbols that are COMDAT
+  # group signatures (`.data.rel.ro.local._ZN...[_ZN...]`, e.g.
+  # duckdb::TableCatalogEntry::Name) cannot be localized - objcopy keeps a group
+  # signature global so the linker can dedupe the group - and they then collide as
+  # "multiple definition".
+  #
+  # So RENAME instead: every symbol this object defines, except the sc:: boundary,
+  # gets a prefix. Internal references are relocations against those same symbol
+  # table entries, so they follow the rename; the host's duckdb symbols keep their
+  # original names and nothing overlaps. Undefined symbols (libc, libstdc++) are not
+  # listed and so are untouched.
   nm -g --defined-only "$SHIM" | grep -E ' [TWD] _ZN2sc' | sed 's/.* //' | sort -u > "$WORK/sc_keep.txt"
   n=$(wc -l < "$WORK/sc_keep.txt" | tr -d ' ')
   [ "$n" -gt 0 ] || { echo "FATAL: no sc:: boundary symbols found in $SHIM"; nm -g --defined-only "$SHIM" | head -20; exit 1; }
   echo "storage_compat: guest blob will export $n sc:: symbols and nothing else"
   echo "storage_compat: ld=$(command -v ld) objcopy=${OBJCOPY:-objcopy}"
+
   ld -r --whole-archive "${ARCHIVES[@]}" --no-whole-archive "$SHIM" -o "$OUT.tmp"
-  # Two passes, because they catch different things:
-  #  --localize-hidden   demotes STV_HIDDEN symbols (what -fvisibility=hidden produced)
-  #  --keep-global-symbols demotes everything else that is still globally visible,
-  #                      including weak/vague-linkage symbols (inline fns, vtables,
-  #                      typeinfo) that --keep-global-symbols alone left behind.
-  "${OBJCOPY:-objcopy}" --localize-hidden \
-                        --wildcard --localize-symbol='_ZN6duckdb*' \
-                        --wildcard --localize-symbol='_ZNK6duckdb*' \
-                        --wildcard --localize-symbol='_ZTVN6duckdb*' \
-                        --wildcard --localize-symbol='_ZTIN6duckdb*' \
-                        --wildcard --localize-symbol='_ZTSN6duckdb*' \
-                        --wildcard --localize-symbol='duckdb_*' \
-                        --keep-global-symbols="$WORK/sc_keep.txt" \
-                        "$OUT.tmp" "$OUT"
+
+  nm --defined-only "$OUT.tmp" | awk 'NF>=3 {print $3}' | sort -u \
+    | grep -v '^_ZN2sc' | grep -v '^$' \
+    | awk '{print $1" scguest_"$1}' > "$WORK/sc_rename.txt"
+  r=$(wc -l < "$WORK/sc_rename.txt" | tr -d ' ')
+  echo "storage_compat: renaming $r embedded symbols out of the host's way"
+  "${OBJCOPY:-objcopy}" --redefine-syms="$WORK/sc_rename.txt" "$OUT.tmp" "$OUT"
   rm -f "$OUT.tmp"
-  # A symbol that is GLOBAL/WEAK but STV_HIDDEN becomes local at the final link, so it
-  # cannot collide; only DEFAULT-visibility ones are real exports.
-  visible() { readelf -sW "$1" 2>/dev/null | awk '$5!="LOCAL" && $7!="UND" && $6=="DEFAULT" {print $8}'; }
-  cpp_exported=$(visible "$OUT" | grep -c '^_ZN\?K\?6duckdb\|^_ZT[VIS]N6duckdb' || true)
-  capi_exported=$(visible "$OUT" | grep -c '^duckdb_[a-z]' || true)
+
+  # Nothing the host also defines may remain under its original name.
+  leaked=$(nm --defined-only "$OUT" | awk 'NF>=3 {print $3}' \
+           | grep -Ec '^(_Z.*[0-9]duckdb|duckdb_[a-z])' || true)
+  cpp_exported=$leaked
+  capi_exported=0
   undef=$(nm -u "$OUT" | grep -c '_ZN6duckdb' || true)
-  if [ "$cpp_exported" != "0" ] || [ "$capi_exported" != "0" ]; then
-    echo "---- still visible (first 20) ----"
-    visible "$OUT" | grep -E '^_Z.*6duckdb|^duckdb_[a-z]' | head -20
-    echo "---- their symbol table entries ----"
-    readelf -sW "$OUT" 2>/dev/null | grep -E '6duckdb|duckdb_[a-z]' | awk '$5!="LOCAL"' | head -10
+  if [ "$leaked" != "0" ]; then
+    echo "---- still defined under a host-colliding name (first 20) ----"
+    nm --defined-only "$OUT" | awk 'NF>=3 {print $3}' | grep -E '^(_Z.*[0-9]duckdb|duckdb_[a-z])' | head -20
   fi
+  kept=$(nm -g --defined-only "$OUT" | grep -c ' _ZN2sc' || true)
+  [ "$kept" = "$n" ] || { echo "FATAL: expected $n sc:: symbols to survive, found $kept"; exit 1; }
   ;;
 *)
   echo "FATAL: unsupported platform $(uname -s)"; exit 1;;
