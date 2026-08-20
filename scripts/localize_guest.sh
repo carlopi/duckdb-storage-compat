@@ -35,17 +35,40 @@ Darwin)
   undef=$(nm -u "$OUT" | grep -c '6duckdb' || true)
   ;;
 Linux)
-  nm -g --defined-only "$SHIM" | grep ' T _ZN2sc' | sed 's/.* //' | sort -u > "$WORK/sc_keep.txt"
+  # GNU nm marks mangled names without a leading underscore.
+  nm -g --defined-only "$SHIM" | grep -E ' [TWD] _ZN2sc' | sed 's/.* //' | sort -u > "$WORK/sc_keep.txt"
   n=$(wc -l < "$WORK/sc_keep.txt" | tr -d ' ')
-  [ "$n" -gt 0 ] || { echo "FATAL: no sc:: boundary symbols found in $SHIM"; exit 1; }
+  [ "$n" -gt 0 ] || { echo "FATAL: no sc:: boundary symbols found in $SHIM"; nm -g --defined-only "$SHIM" | head -20; exit 1; }
   echo "storage_compat: guest blob will export $n sc:: symbols and nothing else"
   echo "storage_compat: ld=$(command -v ld) objcopy=${OBJCOPY:-objcopy}"
   ld -r --whole-archive "${ARCHIVES[@]}" --no-whole-archive "$SHIM" -o "$OUT.tmp"
-  "${OBJCOPY:-objcopy}" --keep-global-symbols="$WORK/sc_keep.txt" "$OUT.tmp" "$OUT"
+  # Two passes, because they catch different things:
+  #  --localize-hidden   demotes STV_HIDDEN symbols (what -fvisibility=hidden produced)
+  #  --keep-global-symbols demotes everything else that is still globally visible,
+  #                      including weak/vague-linkage symbols (inline fns, vtables,
+  #                      typeinfo) that --keep-global-symbols alone left behind.
+  "${OBJCOPY:-objcopy}" --localize-hidden \
+                        --wildcard --localize-symbol='_ZN6duckdb*' \
+                        --wildcard --localize-symbol='_ZNK6duckdb*' \
+                        --wildcard --localize-symbol='_ZTVN6duckdb*' \
+                        --wildcard --localize-symbol='_ZTIN6duckdb*' \
+                        --wildcard --localize-symbol='_ZTSN6duckdb*' \
+                        --wildcard --localize-symbol='duckdb_*' \
+                        --keep-global-symbols="$WORK/sc_keep.txt" \
+                        "$OUT.tmp" "$OUT"
   rm -f "$OUT.tmp"
-  cpp_exported=$(nm -g --defined-only "$OUT" | grep -c '_ZN6duckdb' || true)
-  capi_exported=$(nm -g --defined-only "$OUT" | grep -cE ' duckdb_[a-z]' || true)
+  # A symbol that is GLOBAL/WEAK but STV_HIDDEN becomes local at the final link, so it
+  # cannot collide; only DEFAULT-visibility ones are real exports.
+  visible() { readelf -sW "$1" 2>/dev/null | awk '$5!="LOCAL" && $7!="UND" && $6=="DEFAULT" {print $8}'; }
+  cpp_exported=$(visible "$OUT" | grep -c '^_ZN\?K\?6duckdb\|^_ZT[VIS]N6duckdb' || true)
+  capi_exported=$(visible "$OUT" | grep -c '^duckdb_[a-z]' || true)
   undef=$(nm -u "$OUT" | grep -c '_ZN6duckdb' || true)
+  if [ "$cpp_exported" != "0" ] || [ "$capi_exported" != "0" ]; then
+    echo "---- still visible (first 20) ----"
+    visible "$OUT" | grep -E '^_Z.*6duckdb|^duckdb_[a-z]' | head -20
+    echo "---- their symbol table entries ----"
+    readelf -sW "$OUT" 2>/dev/null | grep -E '6duckdb|duckdb_[a-z]' | awk '$5!="LOCAL"' | head -10
+  fi
   ;;
 *)
   echo "FATAL: unsupported platform $(uname -s)"; exit 1;;
